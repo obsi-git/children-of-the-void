@@ -1,0 +1,8 @@
+# Unity Muck 
+
+*.csproj
+Library/
+UserSettings/
+Logs/
+*.sln 
+
