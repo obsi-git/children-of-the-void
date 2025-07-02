@@ -4,5 +4,6 @@
 Library/
 UserSettings/
 Logs/
+Temp/
 *.sln 
 

@@ -1,0 +1,200 @@
+using UnityEngine;
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine.InputSystem;
+using UnityEngine.Rendering;
+
+public class PlayerControllerMain : MonoBehaviour
+{
+    private Rigidbody2D rb;
+    private SpriteRenderer sr;
+    private Animator anim;
+    bool facingRight = true;
+
+    [Header("Movement")]
+    public float moveSpeed = 7f;
+    float HorizontalMovement;
+
+    [Header("Jumping")]
+    public float jumpForce = 10f;
+    public float lowJumpMultiplier = 6f;
+    public float fallMultiplier = 7f;
+    bool isGrounded;
+    bool isJumping;
+
+
+    [Header("GroundCheck")]
+    public Transform groundCheckPos;
+    public Vector2 groundCheckSize = new Vector2(0.49f, 0.3f);
+    public LayerMask groundLayer;
+
+    [Header("Gravity")]
+    public float baseGravity = 2f;
+    public float maxFallSpeed = 18f;
+    public float fallGravityMult = 2f;
+
+    [Header("WallCheck")]
+    public Transform wallCheckPos;
+    public Vector2 wallCheckSize = new Vector2(0.49f, 0.3f);
+    public LayerMask wallLayer;
+    bool isTouchingWall;
+
+    [Header("WallMovement")]
+    public float wallSlideSpeed = 2f;
+    bool isWallSliding;
+    bool wasWallSliding = false;
+
+
+    [Header("Attack")]
+    public GameObject attackHitbox;
+    public float attackDuration = 0.2f;
+    public bool isAttacking;
+
+    void Start()
+    {
+        rb = GetComponent<Rigidbody2D>();
+        sr = GetComponent<SpriteRenderer>();
+        anim = GetComponent<Animator>();
+        attackHitbox.SetActive(false);
+    }
+
+    void Update()
+    {
+        ProcessGravity();
+        Move();
+        Jump();
+        GroundCheck();
+        WallCheck();
+        ProcessWallSlide();
+        Flip();
+
+        anim.SetFloat("Speed", Mathf.Abs(HorizontalMovement));
+        anim.SetBool("isWallSliding", isWallSliding);
+        anim.SetBool("isJumping", !isGrounded && rb.linearVelocity.y > 0.1f);
+        anim.SetBool("isFalling", !isGrounded && rb.linearVelocity.y < -0.1f);
+    }
+
+    public void Move()
+    {
+        HorizontalMovement = Input.GetAxis("Horizontal");
+        rb.linearVelocity = new Vector2(HorizontalMovement * moveSpeed, rb.linearVelocity.y);
+    }
+
+    private void ProcessGravity()
+    {
+        if (rb.linearVelocity.y < 0)
+        {
+            rb.gravityScale = baseGravity * fallGravityMult;
+            rb.linearVelocity = new Vector2(rb.linearVelocity.x, Mathf.Max(rb.linearVelocity.y, -maxFallSpeed));
+        }
+        else
+        {
+            rb.gravityScale = baseGravity;
+        }
+    }
+
+    public void Jump()
+    {
+        if (Input.GetButtonDown("Jump") && isGrounded)
+        {
+            rb.linearVelocity = new Vector2(rb.linearVelocity.x, jumpForce);
+            isJumping = true;
+        }
+        if (!isGrounded)
+        {
+            if (rb.linearVelocity.y > 0.1f && !Input.GetKey(KeyCode.Space))
+            {
+                rb.linearVelocity += Vector2.up * Physics2D.gravity.y * (lowJumpMultiplier - 1) * Time.deltaTime;
+            }
+            else if (rb.linearVelocity.y < -0.1f)
+            {
+                rb.linearVelocity += Vector2.up * Physics2D.gravity.y * (lowJumpMultiplier - 1) * Time.deltaTime;
+            }
+        }
+    }
+
+    public void Attack()
+    {
+        AnimatorStateInfo stateInfo = anim.GetCurrentAnimatorStateInfo(0);
+
+        if (Input.GetMouseButtonDown(0) && !isAttacking)
+        {
+            isAttacking = true;
+            anim.ResetTrigger("attack");
+            anim.SetTrigger("attack");
+            attackHitbox.SetActive(true);
+        }
+        stateInfo = anim.GetCurrentAnimatorStateInfo(0);
+
+        // If no longer in Attack animation, reset
+
+        if (isAttacking && !stateInfo.IsName("Attack"))
+        {
+            isAttacking = false;
+            attackHitbox.SetActive(false);
+        }
+
+    }
+
+    private void GroundCheck()
+    {
+        if (Physics2D.OverlapBox(groundCheckPos.position, groundCheckSize, 0, groundLayer))
+        {
+            isGrounded = true;
+        }
+        else
+        {
+            isGrounded = false;
+        }
+        if (isGrounded) isJumping = false;
+    }
+
+    private void OnDrawGizmosSelected()
+    {
+        //groundcheck
+        Gizmos.color = Color.white;
+        Gizmos.DrawWireCube(groundCheckPos.position, groundCheckSize);
+
+        //wallcheck
+        Gizmos.color = Color.blue;
+        Gizmos.DrawWireCube(wallCheckPos.position, wallCheckSize);
+    }
+
+    private void Flip()
+    {
+        if (facingRight && HorizontalMovement < 0 || !facingRight && HorizontalMovement > 0)
+        {
+            facingRight = !facingRight;
+            Vector3 ls = transform.localScale;
+            ls.x *= -1f;
+            transform.localScale = ls;
+        }
+    }
+    private void ProcessWallSlide()
+    {
+        //Movement != 0, is touching wall, and isn't grounded. 
+        if (!isGrounded && WallCheck() && HorizontalMovement != 0)
+        {
+            isWallSliding = true;
+            rb.linearVelocity = new Vector2(rb.linearVelocity.x, Mathf.Max(rb.linearVelocity.y, -wallSlideSpeed)); //caps wallslide speed :]
+        }
+        else
+        {
+            isWallSliding = false;
+        }
+        if (isWallSliding)
+        {
+            facingRight = !facingRight;
+            Vector3 ls = transform.localScale;
+            ls.x *= -1f;
+            transform.localScale = ls;
+        } 
+    }
+
+    private bool WallCheck()
+    {
+        isTouchingWall = Physics2D.OverlapBox(wallCheckPos.position, wallCheckSize, 0, wallLayer);
+        return isTouchingWall;
+    }
+    
+}
