@@ -2,27 +2,41 @@ using UnityEngine;
 
 public class PlayerSpawn : MonoBehaviour
 {
+    public GameObject playerObject; // ← Drag your player here in the Inspector
     public static Vector2 spawnPoint;
-    private static GameObject player;
 
     void Awake()
     {
         spawnPoint = transform.position;
-    }
 
-    public static void UpdateSpawnPoint(Vector2 newpoint)
-    {
-        spawnPoint = newpoint;
-    }
-
-    public static void RespawnPlayer()
-    {
-        if (player != null)
+        if (playerObject == null)
         {
-            player.transform.position = spawnPoint;
+            Debug.LogWarning("Player object not assigned in PlayerSpawn! Assign it in the Inspector.");
+        }
+    }
 
-            var controller = player.GetComponent<PlayerControllerMain>();
-            controller.ResetAfterRespawn();
+    public static void UpdateSpawnPoint(Vector2 newPoint)
+    {
+        spawnPoint = newPoint;
+    }
+
+    public void RespawnPlayer()
+    {
+        if (playerObject != null)
+        {
+            playerObject.transform.position = spawnPoint;
+
+            var controller = playerObject.GetComponent<PlayerControllerMain>();
+            var manager = playerObject.GetComponent<GameManager>();
+            if (controller != null)
+            {
+                controller.ResetAfterRespawn();
+                manager.OnPlayerRespawn();
+            }
+        }
+        else
+        {
+            Debug.LogWarning("playerObject is null in PlayerSpawn — make sure it’s assigned.");
         }
     }
 }

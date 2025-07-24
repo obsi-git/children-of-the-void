@@ -4,6 +4,9 @@ public class GameManager : MonoBehaviour
 {
     public static bool isPaused = false;
     public GameObject pauseMenuUI;
+    public PlayerSpawn playerSpawn;
+    public BossController boss;
+
 
     void Update()
     {
@@ -36,6 +39,14 @@ public class GameManager : MonoBehaviour
     public void ReloadLastCheckpoint()
     {
         Resume();
-        PlayerSpawn.RespawnPlayer();
+        playerSpawn.RespawnPlayer();
+        OnPlayerRespawn();
+    }
+    public void OnPlayerRespawn()
+    {
+        if (boss != null)
+        {
+            boss.RespawnBoss();
+        }
     }
 }

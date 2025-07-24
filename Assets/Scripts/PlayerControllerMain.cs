@@ -1,16 +1,12 @@
 using UnityEngine;
 using System.Collections;
-using System.Collections.Generic;
-using UnityEngine.InputSystem;
-using UnityEngine.Rendering;
-using System.Runtime.CompilerServices;
-
 public class PlayerControllerMain : MonoBehaviour
 {
     private Rigidbody2D rb;
     private SpriteRenderer sr;
     private Animator anim;
     bool facingRight = true;
+    public float killHeight = -64f;
 
     [Header("Movement")]
     public float moveSpeed = 7f;
@@ -22,7 +18,6 @@ public class PlayerControllerMain : MonoBehaviour
     public float fallMultiplier = 7f;
     bool isGrounded;
     bool isJumping;
-
 
     [Header("GroundCheck")]
     public Transform groundCheckPos;
@@ -39,6 +34,7 @@ public class PlayerControllerMain : MonoBehaviour
     public Transform wallCheckLeft;
     public Vector2 wallCheckSize = new Vector2(0.49f, 0.3f);
     public LayerMask wallLayer;
+    public float wallRaycastDistance = 0.6f;
     bool isTouchingWall;
 
     [Header("WallMovement")]
@@ -54,11 +50,14 @@ public class PlayerControllerMain : MonoBehaviour
     private bool isWallJumping = false;
     private float wallJumpTimer = 0f;
 
-
     [Header("Attack")]
-    public GameObject attackHitbox;
     public float attackDuration = 0.2f;
     public bool isAttacking;
+    public Vector2 attackHitboxSize = new Vector2(1.5f, 1f);
+    public float attackRangeOffset = 1f;
+    public int baseAttackDamage = 2;
+    public float voidTier1Multiplier = 1.5f;
+    public float voidTier2Multiplier = 2f;
 
     [Header("DodgeRoll")]
     public float RollSpeed = 12f;
@@ -73,13 +72,11 @@ public class PlayerControllerMain : MonoBehaviour
     [Header("Dash")]
     public float DashSpeed = 20f;
     public float DashDuration = 0.1f;
-
     public float DashCooldown = 1.2f;
     public float DashTimer = 0f;
     public float DashCooldownTimer = 0f;
     public bool canDash = true;
     public bool isDashing = false;
-
     [SerializeField]
     private TrailRenderer DashTrail;
 
@@ -90,7 +87,7 @@ public class PlayerControllerMain : MonoBehaviour
 
     [Header("Health")]
     public int maxHealth = 5;
-    private int currentHealth;
+    public int currentHealth;
     public int healingPotions = 2;
     public int heal = 2;
 
@@ -104,17 +101,44 @@ public class PlayerControllerMain : MonoBehaviour
     private float hurtFlashTimer = 0f;
     private bool isHurt = false;
     private Color originalColor;
+    public float hurtDuration = 0.2f;
+    private float hurtTimer = 0f;
 
     [Header("VoidEnergy")]
     public int currentVoidEnergy = 0;
     public int maxVoidEnergy = 10;
+    public int voidEnergyPerHit = 1;
+    public int voidTier1Threshold = 5;
+    public int voidTier2Threshold = 10;
+
+    [Header("Debug")]
+    public bool showGizmos = true;
+    public Color groundCheckColor = Color.green;
+    public Color wallCheckColor = Color.blue;
+    public Color wallRaycastColor = Color.red;
+    public Color attackHitboxColor = Color.red;
+    public Color playerBoundsColor = Color.yellow;
+
+    [SerializeField] private Transform wallCheck;
+    [SerializeField] private Transform attackHitbox;
+    private Vector2 wallCheckOriginalOffset;
+    private Vector2 attackHitboxOriginalOffset;
+
+    private Vector3 originalScale; // Store the original scale
+
+    void Awake()
+    {
+        // Store the original local positions
+        wallCheckOriginalOffset = wallCheck.localPosition;
+        attackHitboxOriginalOffset = attackHitbox.localPosition;
+        originalScale = transform.localScale; // Save the initial scale
+    }
 
     void Start()
     {
         rb = GetComponent<Rigidbody2D>();
         sr = GetComponent<SpriteRenderer>();
         anim = GetComponent<Animator>();
-        attackHitbox.SetActive(false);
         currentHealth = maxHealth;
         spawnpoint = transform.position;
         originalColor = sr.color;
@@ -122,6 +146,15 @@ public class PlayerControllerMain : MonoBehaviour
 
     void Update()
     {
+        if (transform.position.y < killHeight)
+        {
+            Die();
+        }
+        if (hurtTimer > 0)
+        {
+            hurtTimer -= Time.deltaTime;
+            return;
+        }
         ProcessGravity();
         Move();
         Jump();
@@ -133,14 +166,17 @@ public class PlayerControllerMain : MonoBehaviour
         WallJump();
         Roll();
         Dash();
+        Heal();
         anim.SetFloat("Speed", Mathf.Abs(HorizontalMovement));
         anim.SetBool("isWallSliding", isWallSliding);
         anim.SetBool("isJumping", !isGrounded && rb.linearVelocity.y > 0.1f);
         anim.SetBool("isFalling", !isGrounded && rb.linearVelocity.y < -0.1f);
+        if(!isWallSliding) sr.flipX = !facingRight;
     }
 
     public void Move()
     {
+        if (isHurt || isDead || hurtTimer > 0) return;
         HorizontalMovement = Input.GetAxis("Horizontal");
         if (!isRolling && !isDashing) rb.linearVelocity = new Vector2(HorizontalMovement * moveSpeed, rb.linearVelocity.y);
     }
@@ -234,16 +270,17 @@ public class PlayerControllerMain : MonoBehaviour
 
     IEnumerator DoAttack()
     {
-        attackHitbox.SetActive(true);
-
+        // Calculate hitbox center based on facing direction
+        Vector2 attackCenter = (Vector2)transform.position + new Vector2(facingRight ? attackRangeOffset : -attackRangeOffset, 0);
         Collider2D[] EnemiesHit = Physics2D.OverlapBoxAll(
-            attackHitbox.transform.position,
-            attackHitbox.GetComponent<BoxCollider2D>().size,
+            attackCenter,
+            attackHitboxSize,
             0f
         );
 
         foreach (var enemy in EnemiesHit)
         {
+            Debug.Log($"Player attack hit: {enemy.name} (tag: {enemy.tag})");
             if (enemy.CompareTag("Enemy"))
             {
                 EnemyBase enemyScript = enemy.GetComponent<EnemyBase>();
@@ -259,11 +296,19 @@ public class PlayerControllerMain : MonoBehaviour
                     GainVoid();
                 }
             }
+            // Also allow damaging the boss (BossController)
+            BossController bossScript = enemy.GetComponent<BossController>();
+            if (bossScript != null)
+            {
+                int tier = getVoidTier();
+                float multiplier = (tier == 1) ? 1.5f : (tier == 2) ? 2f : 1f;
+                int finalDamage = Mathf.RoundToInt(2 * multiplier);
+                bossScript.TakeDamage(finalDamage);
+                Debug.Log($"Player dealt {finalDamage} damage to boss: {enemy.name}");
+            }
         }
 
         yield return new WaitForSeconds(attackDuration);
-        attackHitbox.SetActive(false);
-
     }
 
     public void TakeDamage(int damage, Vector2 knockback)
@@ -273,6 +318,7 @@ public class PlayerControllerMain : MonoBehaviour
         int tier = getVoidTier();
         float multiplier = (tier == 1) ? 1.5f : (tier == 2) ? 2f : 1f;
         currentHealth -= Mathf.RoundToInt(damage * multiplier);
+
         if (currentHealth <= 0)
         {
             currentHealth = 0;
@@ -280,13 +326,13 @@ public class PlayerControllerMain : MonoBehaviour
         }
         else
         {
-            rb.linearVelocity = Vector2.zero;
-            rb.AddForce(knockback, ForceMode2D.Impulse);
+            rb.linearVelocity = Vector2.zero; // stop existing movement
+            rb.linearVelocity = knockback;    // launch player back
             anim.SetTrigger("hurt");
             StartCoroutine(HurtFlash());
+            hurtTimer = hurtDuration;
         }
     }
-
     IEnumerator HurtFlash()
     {
         isHurt = true;
@@ -346,14 +392,39 @@ public class PlayerControllerMain : MonoBehaviour
 
     private void OnDrawGizmosSelected()
     {
-        //groundcheck
-        Gizmos.color = Color.white;
+        // Ground check
+        Gizmos.color = groundCheckColor;
         Gizmos.DrawWireCube(groundCheckPos.position, groundCheckSize);
+        
+        // Wall checks
+        Gizmos.color = wallCheckColor;
+        if (wallCheckRight != null)
+            Gizmos.DrawWireCube(wallCheckRight.position, wallCheckSize);
+        if (wallCheckLeft != null)
+            Gizmos.DrawWireCube(wallCheckLeft.position, wallCheckSize);
+            
+        // Wall raycast visualization
+        Gizmos.color = wallRaycastColor;
+        float direction = facingRight ? 1f : -1f;
+        Vector2 origin = transform.position;
+        Vector2 rayDirection = new Vector2(direction, 0f);
+        Gizmos.DrawRay(origin, rayDirection * wallRaycastDistance);
+        
+        // Attack hitbox
+        if (attackHitboxSize != Vector2.zero)
+        {
+            Gizmos.color = attackHitboxColor;
+            Gizmos.DrawWireCube(transform.position + (Vector3)attackHitboxSize * 0.5f, attackHitboxSize);
+        }
+        
+        // Player bounds
+        Gizmos.color = playerBoundsColor;
+        Gizmos.DrawWireCube(transform.position, GetComponent<Collider2D>()?.bounds.size ?? Vector3.one);
     }
 
     private void ProcessWallSlide()
     {
-        if (!isGrounded && WallCheck() && HorizontalMovement != 0)
+         if (!isGrounded && WallCheck() && HorizontalMovement != 0)
         {
             isWallSliding = true;
             rb.linearVelocity = new Vector2(rb.linearVelocity.x, Mathf.Max(rb.linearVelocity.y, -wallSlideSpeed));
@@ -361,6 +432,7 @@ public class PlayerControllerMain : MonoBehaviour
             // Flip sprite to face opposite of wall
             sr.flipX = facingRight ? true : false;
         }
+        
         else
         {
             isWallSliding = false;
@@ -409,8 +481,11 @@ public class PlayerControllerMain : MonoBehaviour
             {
                 facingRight = shouldFaceRight;
                 sr.flipX = !facingRight;
+                wallCheck.transform.localScale = new Vector2(wallCheck.transform.localScale.x * -1, wallCheck.transform.localScale.y);
+                attackHitbox.transform.localScale = new Vector2(attackHitbox.transform.localScale.x * -1, attackHitbox.transform.localScale.y);
             }
         }
+
     }
 
     private void Roll()
@@ -434,7 +509,7 @@ public class PlayerControllerMain : MonoBehaviour
 
             anim.SetTrigger("roll");
             // Uncomment later on to make enemies not collide with player
-            // Physics2D.IgnoreLayerCollision(gameObject.layer, LayerMaskToLayer(enemyLayer), true);
+            Physics2D.IgnoreLayerCollision(gameObject.layer, LayerMask.NameToLayer("Enemy"), true);
         }
 
         if (isRolling)
@@ -449,7 +524,7 @@ public class PlayerControllerMain : MonoBehaviour
                 isInvincible = false;
 
                 //Uncomment to enable collisions again
-                //Physics2D.IgnoreLayerCollision(gameObject.layer, LayerMaskToLayer(enemyLayer), false);
+                Physics2D.IgnoreLayerCollision(gameObject.layer, LayerMask.NameToLayer("Enemy"), false);
             }
         }
     }
@@ -511,9 +586,6 @@ public class PlayerControllerMain : MonoBehaviour
     {
         currentVoidEnergy = Mathf.Min(currentVoidEnergy + 1, maxVoidEnergy);
     }
-
-
-
 
 }
 
